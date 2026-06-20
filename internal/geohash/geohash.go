@@ -117,8 +117,8 @@ func ExpandNeighbors(hash string) []string {
 	}
 
 	prec := len(hash)
-	latStep := calcLatStep(prec)
-	lonStep := calcLonStep(prec)
+	latStep := CalcLatStep(prec)
+	lonStep := CalcLonStep(prec)
 
 	neighbors := make([]string, 0, 9)
 	for dLat := -1; dLat <= 1; dLat++ {
@@ -135,10 +135,97 @@ func ExpandNeighbors(hash string) []string {
 	return neighbors
 }
 
-func calcLatStep(precision int) float64 {
+type BBox struct {
+	MinLat float64
+	MaxLat float64
+	MinLon float64
+	MaxLon float64
+}
+
+func DecodeBounds(hash string) (BBox, error) {
+	if len(hash) == 0 {
+		return BBox{}, fmt.Errorf("empty geohash")
+	}
+
+	var latRange = [2]float64{-90, 90}
+	var lonRange = [2]float64{-180, 180}
+	isEven := true
+
+	for i := 0; i < len(hash); i++ {
+		c := hash[i]
+		idx := bytes.IndexByte([]byte(base32), c)
+		if idx < 0 {
+			return BBox{}, fmt.Errorf("invalid geohash character: %c", c)
+		}
+
+		for j := 4; j >= 0; j-- {
+			bit := (idx >> uint(j)) & 1
+			if isEven {
+				mid := (lonRange[0] + lonRange[1]) / 2
+				if bit == 1 {
+					lonRange[0] = mid
+				} else {
+					lonRange[1] = mid
+				}
+			} else {
+				mid := (latRange[0] + latRange[1]) / 2
+				if bit == 1 {
+					latRange[0] = mid
+				} else {
+					latRange[1] = mid
+				}
+			}
+			isEven = !isEven
+		}
+	}
+
+	return BBox{
+		MinLat: latRange[0],
+		MaxLat: latRange[1],
+		MinLon: lonRange[0],
+		MaxLon: lonRange[1],
+	}, nil
+}
+
+func SnapToGrid(lat, lon float64, precision int) (float64, float64, error) {
+	if precision <= 0 {
+		precision = DefaultPrecision
+	}
+	hash, err := Encode(lat, lon, precision)
+	if err != nil {
+		return lat, lon, err
+	}
+	sLat, sLon, err := Decode(hash)
+	if err != nil {
+		return lat, lon, err
+	}
+	return sLat, sLon, nil
+}
+
+func DistanceToCellEdge(lat, lon float64, hash string) (float64, error) {
+	bbox, err := DecodeBounds(hash)
+	if err != nil {
+		return 0, err
+	}
+
+	dNorth := math.Abs(lat - bbox.MaxLat)
+	dSouth := math.Abs(lat - bbox.MinLat)
+	dEast := math.Abs(lon - bbox.MaxLon)
+	dWest := math.Abs(lon - bbox.MinLon)
+
+	minDist := math.Min(math.Min(dNorth, dSouth), math.Min(dEast, dWest))
+
+	latRad := lat * math.Pi / 180.0
+	kmPerDegLat := 111.32
+	kmPerDegLon := 111.32 * math.Cos(latRad)
+
+	return minDist * math.Min(kmPerDegLat, kmPerDegLon), nil
+}
+
+func CalcLatStep(precision int) float64 {
 	return 180.0 / math.Pow(2, float64(precision*5/2))
 }
 
-func calcLonStep(precision int) float64 {
+func CalcLonStep(precision int) float64 {
 	return 360.0 / math.Pow(2, float64(precision*5/2+1))
 }

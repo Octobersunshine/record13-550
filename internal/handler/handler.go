@@ -14,6 +14,7 @@ type AcceptRequest struct {
 	OrderID  string  `json:"order_id"`
 	Lat      float64 `json:"lat"`
 	Lon      float64 `json:"lon"`
+	Accuracy float64 `json:"accuracy"`
 }
 
 type ErrorResponse struct {
@@ -56,12 +57,16 @@ func (h *Handler) HandleAccept(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "lon must be between -180 and 180", http.StatusBadRequest)
 		return
 	}
+	if req.Accuracy < 0 {
+		req.Accuracy = 0
+	}
 
 	record := store.AcceptRecord{
 		DriverID: req.DriverID,
 		OrderID:  req.OrderID,
 		Lat:      req.Lat,
 		Lon:      req.Lon,
+		Accuracy: req.Accuracy,
 		Time:     time.Now(),
 	}
 
