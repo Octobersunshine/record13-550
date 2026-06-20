@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -133,6 +135,106 @@ func (h *Handler) HandleHeat(w http.ResponseWriter, r *http.Request) {
 		"total": len(heats),
 		"areas": heats,
 	})
+}
+
+func (h *Handler) HandleHeatExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+
+	startDate, endDate, err := parseDateRange(q.Get("start_date"), q.Get("end_date"))
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	page := 1
+	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 0 {
+		page = p
+	}
+
+	pageSize := 20
+	if ps, err := strconv.Atoi(q.Get("page_size")); err == nil && ps > 0 && ps <= 500 {
+		pageSize = ps
+	}
+
+	result := h.store.GetHeatsPaginated(startDate, endDate, page, pageSize)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+func (h *Handler) HandleDailyDetailCSV(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	q := r.URL.Query()
+
+	startDate, endDate, err := parseDateRange(q.Get("start_date"), q.Get("end_date"))
+	if err != nil {
+		writeError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	records := h.store.GetDailyDetail(startDate, endDate)
+
+	filename := fmt.Sprintf("order_detail_%s.csv", time.Now().Format("20060102_150405"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+
+	header := []string{"Date", "Geohash", "Latitude", "Longitude", "OrderID", "DriverID"}
+	if err := cw.Write(header); err != nil {
+		writeError(w, "failed to write csv header", http.StatusInternalServerError)
+		return
+	}
+
+	for _, rec := range records {
+		row := []string{
+			rec.Date,
+			rec.Geohash,
+			strconv.FormatFloat(rec.Lat, 'f', 6, 64),
+			strconv.FormatFloat(rec.Lon, 'f', 6, 64),
+			rec.OrderID,
+			rec.DriverID,
+		}
+		if err := cw.Write(row); err != nil {
+			break
+		}
+	}
+}
+
+func parseDateRange(startStr, endStr string) (time.Time, time.Time, error) {
+	var startDate, endDate time.Time
+
+	if startStr != "" {
+		t, err := time.ParseInLocation("2006-01-02", startStr, time.Local)
+		if err != nil {
+			return startDate, endDate, fmt.Errorf("invalid start_date format, expected YYYY-MM-DD: %s", startStr)
+		}
+		startDate = t
+	}
+
+	if endStr != "" {
+		t, err := time.ParseInLocation("2006-01-02", endStr, time.Local)
+		if err != nil {
+			return startDate, endDate, fmt.Errorf("invalid end_date format, expected YYYY-MM-DD: %s", endStr)
+		}
+		endDate = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+	}
+
+	if !startDate.IsZero() && !endDate.IsZero() && startDate.After(endDate) {
+		return startDate, endDate, fmt.Errorf("start_date must be before end_date")
+	}
+
+	return startDate, endDate, nil
 }
 
 func writeError(w http.ResponseWriter, msg string, code int) {
